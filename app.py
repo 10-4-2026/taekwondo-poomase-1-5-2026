@@ -152,7 +152,7 @@ def display_overall_analysis(df_s_res, df_p_res, metrics):
     target_pct = st.slider("Mức độ lệch tổng thể muốn kiểm tra (%):", 5, 50, 5, key="overall_slider")
     
     joint_cols = list(metrics.keys())
-    all_diffs = [np.nan_to_num(np.abs(df_s_res[c] - df_p_res[c]) / (df_s_res[c] + 1e-6), 0) for c in joint_cols]
+    all_diffs = [np.nan_to_num(np.abs(df_s_res[c] - df_p_res[c]) / (df_s_res[c] + 1e-6), nan=0.0) for c in joint_cols]
     overall_errors = np.clip(np.mean(all_diffs, axis=0), 0, 1.0)
     
     indices = []
@@ -187,7 +187,7 @@ def display_joint_analysis(df_s_res, df_p_res, metrics):
     # Phân tích frame theo slider
     target_error_pct = st.slider("Mức độ lệch khớp muốn kiểm tra (%):", 5, 50, 5, key="joint_slider")
     diffs = np.abs(df_s_res[angle_to_plot] - df_p_res[angle_to_plot])
-    rel_errors = np.clip(np.nan_to_num(diffs / (df_s_res[angle_to_plot] + 1e-6), 0), 0, 1.0)
+    rel_errors = np.clip(np.nan_to_num(diffs / (df_s_res[angle_to_plot] + 1e-6), nan=0.0), 0, 1.0)
     
     indices = []
     for start, end in calculate_segments(len(rel_errors)):
