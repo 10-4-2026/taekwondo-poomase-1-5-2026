@@ -9,6 +9,8 @@ import os
 import time
 import multiprocessing
 import shutil
+from scipy.spatial import distance
+
 
 # --- CẤU HÌNH & STYLE ---
 def setup_page():
@@ -53,6 +55,13 @@ def calculate_segments(n_frames, n_segments=3):
     """Chia video thành các đoạn để lấy mẫu"""
     size = n_frames // n_segments
     return [(i * size, (i + 1) * size if i < n_segments - 1 else n_frames) for i in range(n_segments)]
+
+def js_distance(v1, v2):
+    """Tính khoảng cách Jensen-Shannon giữa hai vector (chuẩn hóa thành phân phối)"""
+    v1 = np.atleast_1d(v1).astype(float) + 1e-10
+    v2 = np.atleast_1d(v2).astype(float) + 1e-10
+    return distance.jensenshannon(v1 / np.sum(v1), v2 / np.sum(v2))
+
 
 # --- CÁC THÀNH PHẦN GIAO DIỆN ---
 def sidebar_info():
@@ -144,7 +153,7 @@ def display_summary_metrics(metrics):
     
     m_col1, m_col2, m_col3 = st.columns(3)
     with m_col1: st.info(f"**Chỉ số JS Trung bình:** {avg_js:.4f}")
-    with m_col3: st.success(f"**ĐỘ TƯƠNG ĐỒNG TỔNG THỂ: {similarity_pct:.1f}%**")
+    with m_col3: st.success(f"**ĐỘ TƯƠNG ĐỒNG TỔNG THỂ: {similarity_pct:.4f}%**")
 
 def display_overall_analysis(df_s_res, df_p_res, metrics):
     st.divider()
@@ -160,17 +169,37 @@ def display_overall_analysis(df_s_res, df_p_res, metrics):
         seg = overall_errors[start:end]
         indices.append(start + np.argmin(np.abs(seg - target_pct/100.0)))
 
+    # Tìm frame tốt nhất trong khoảng lân cận dựa trên dữ liệu góc
+    best_p_indices = []
+    for idx in indices:
+        min_js = float('inf')
+        best_idx = idx
+        for ii in range(max(0, idx - 250), min(len(df_p_res), idx + 251)):
+            if ii < 0 or ii >= len(df_p_res):
+                continue                
+            v_s = df_s_res[joint_cols].iloc[idx].values
+            v_p = df_p_res[joint_cols].iloc[ii].values
+            #dist = js_distance(v_s, v_p)
+            # tính dist = trung bình sai số góc            
+            dist = np.mean(np.abs(v_s - v_p))
+            if dist < min_js:
+                min_js = dist
+                best_idx = ii
+        best_p_indices.append(best_idx)
+
     s_frames = get_multiple_frames(st.session_state['s_video_bytes'], indices)
-    p_frames = get_multiple_frames(st.session_state['p_video_bytes'], indices)
+    p_frames = get_multiple_frames(st.session_state['p_video_bytes'], best_p_indices)
 
     cols = st.columns(3)
     for i, idx in enumerate(indices):
+        best_p_idx = best_p_indices[i]
         with cols[i]:
             st.write(f"**Khoảnh khắc {i+1} (Frame {idx})**")
             st.caption(f"Sai lệch tổng thể: {overall_errors[idx]*100:.1f}%")
-            if idx in s_frames and idx in p_frames:
+            if idx in s_frames and best_p_idx in p_frames:
                 st.image(s_frames[idx], caption="Mẫu", width='stretch')
-                st.image(p_frames[idx], caption="Thực hiện", width='stretch')
+                st.image(p_frames[best_p_idx], caption=f"Thực hiện (Tối ưu tại frame {best_p_idx})", width='stretch')
+
 
 def display_joint_analysis(df_s_res, df_p_res, metrics):
     st.divider()
@@ -184,27 +213,8 @@ def display_joint_analysis(df_s_res, df_p_res, metrics):
     fig.update_layout(title=f"Đồ thị: {angle_to_plot}", hovermode="x unified")
     st.plotly_chart(fig, width='stretch')
 
-    # Phân tích frame theo slider
-    target_error_pct = st.slider("Mức độ lệch khớp muốn kiểm tra (%):", 5, 50, 5, key="joint_slider")
-    diffs = np.abs(df_s_res[angle_to_plot] - df_p_res[angle_to_plot])
-    rel_errors = np.clip(np.nan_to_num(diffs / (df_s_res[angle_to_plot] + 1e-6), nan=0.0), 0, 1.0)
-    
-    indices = []
-    for start, end in calculate_segments(len(rel_errors)):
-        seg = rel_errors[start:end]
-        indices.append(start + np.argmin(np.abs(seg - target_error_pct/100.0)))
+    pass
 
-    s_frames = get_multiple_frames(st.session_state['s_video_bytes'], indices)
-    p_frames = get_multiple_frames(st.session_state['p_video_bytes'], indices)
-
-    cols = st.columns(3)
-    for i, idx in enumerate(indices):
-        with cols[i]:
-            st.write(f"**Cặp {i+1} (Frame {idx})**")
-            st.caption(f"Độ lệch: {rel_errors[idx]*100:.1f}% ({diffs[idx]:.1f}°)")
-            if idx in s_frames and idx in p_frames:
-                st.image(s_frames[idx], caption="Mẫu", width='stretch')
-                st.image(p_frames[idx], caption="Thực hiện", width='stretch')
 
 # --- MAIN APP ---
 def main():
