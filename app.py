@@ -10,6 +10,7 @@ import time
 import multiprocessing
 import shutil
 from scipy.spatial import distance
+from llm_feedback import get_llm_feedback
 
 
 # --- CẤU HÌNH & STYLE ---
@@ -72,6 +73,68 @@ def sidebar_info():
         st.write("3. Nhấn 'Bắt đầu Phân tích' và đợi kết quả.")
         st.divider()
         st.info("Sử dụng MediaPipe Pose Landmarker Heavy")
+        st.divider()
+        st.subheader("🤖 Cấu hình AI")
+        
+        provider = st.selectbox(
+            "Nhà cung cấp LLM:",
+            ["OpenRouter", "OpenAI", "Google Gemini", "DeepSeek", "Qwen", "Nvidia"],
+            index=0
+        )
+        st.session_state['llm_provider'] = provider
+        
+        env_file = st.file_uploader("Hoặc tải lên file .env", help="Chứa các dòng dạng OPENAI_API_KEY=your_key")
+        if env_file is not None:
+            content = env_file.getvalue().decode("utf-8")
+            env_keys = {}
+            for line in content.splitlines():
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    env_keys[k.strip()] = v.strip(' "\'')
+            
+            provider_keys = {
+                "OpenRouter": ["OPENROUTER_API_KEY"],
+                "OpenAI": ["OPENAI_API_KEY"],
+                "Google Gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+                "DeepSeek": ["DEEPSEEK_API_KEY"],
+                "Qwen": ["QWEN_API_KEY", "DASHSCOPE_API_KEY"],
+                "Nvidia": ["NVIDIA_API_KEY"]
+            }
+            # Lấy key ứng với provider hiện tại
+            for pk in provider_keys.get(provider, []):
+                if pk in env_keys:
+                    # Nếu key khác với hiện tại, cập nhật session_state để hiển thị lên UI
+                    if env_keys[pk] != st.session_state.get(f'api_key_input_{provider}'):
+                        st.session_state[f'api_key_input_{provider}'] = env_keys[pk]
+                    break
+
+        api_key = st.text_input(
+            f"API Key ({provider}):", 
+            type="password", 
+            help=f"Nhập trực tiếp hoặc lấy từ file .env",
+            key=f'api_key_input_{provider}'
+        )
+        if api_key:
+            st.session_state['api_key'] = api_key
+        else:
+            if 'api_key' in st.session_state:
+                st.session_state['api_key'] = ""        
+        # Cho phép nhập model tùy chỉnh
+        default_models = {
+            "OpenRouter": "openrouter/free",
+            "OpenAI": "gpt-4o",
+            "Google Gemini": "gemini-1.5-flash",
+            "DeepSeek": "deepseek-chat",
+            "Qwen": "qwen-plus",
+            "Nvidia": "meta/llama-3.1-70b-instruct"
+        }
+        
+        model = st.text_input("Model ID (tùy chọn):", value=default_models.get(provider, ""), help="Để trống để sử dụng mặc định")
+        st.session_state['llm_model'] = model
+
+        if not api_key:
+            st.warning(f"⚠️ Chưa nhập API Key cho {provider}.")
 
 def video_upload_section():
     col1, col2 = st.columns(2)
@@ -213,7 +276,30 @@ def display_joint_analysis(df_s_res, df_p_res, metrics):
     fig.update_layout(title=f"Đồ thị: {angle_to_plot}", hovermode="x unified")
     st.plotly_chart(fig, width='stretch')
 
-    pass
+def display_ai_feedback(metrics):
+    st.divider()
+    st.header("🤖 Nhận xét từ Chuyên gia AI")
+    
+    if 'api_key' not in st.session_state or not st.session_state['api_key']:
+        st.warning("Vui lòng nhập OpenRouter API Key ở thanh bên để sử dụng tính năng này.")
+        return
+
+    avg_js = np.mean([v['JS_Distance'] for v in metrics.values()])
+    similarity_pct = (1 - avg_js) * 100
+
+    if st.button("✨ Tạo Nhận xét AI"):
+        with st.spinner("AI đang phân tích bài tập của bạn..."):
+            feedback = get_llm_feedback(
+                st.session_state.get('llm_provider', 'OpenRouter'),
+                st.session_state.get('api_key', ''), 
+                st.session_state.get('llm_model', ''),
+                metrics, 
+                similarity_pct
+            )
+            st.session_state['ai_feedback'] = feedback
+    
+    if 'ai_feedback' in st.session_state:
+        st.markdown(st.session_state['ai_feedback'])
 
 
 # --- MAIN APP ---
@@ -234,6 +320,10 @@ def main():
 
         
         display_summary_metrics(st.session_state['metrics'])
+        
+        # Thêm phần nhận xét AI ở đây
+        display_ai_feedback(st.session_state['metrics'])
+        
         display_overall_analysis(st.session_state['df_s_res'], st.session_state['df_p_res'], st.session_state['metrics'])
         display_joint_analysis(st.session_state['df_s_res'], st.session_state['df_p_res'], st.session_state['metrics'])
         
